@@ -14,109 +14,22 @@ if (!isset($_SESSION['userid'])) {
     header("Location: login.php");
     exit();
 }
-// --- AJAX PROFILE PIC UPLOAD HANDLER ---
-if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_FILES['profile_pic']) && isset($_POST['ajax'])) {
-    // Only allow owner!
-    if (!isset($_SESSION['userid']) || $_POST['userid'] != $_SESSION['userid']) {
-        echo json_encode(["success"=>false,"error"=>"Unauthorized."]);
-        exit;
-    }
-
-    $allowed = ['jpg', 'jpeg', 'png'];
-    $maxDim = 800;
-    $uploadDir = __DIR__ . "/uploads/user_pro_pics/";
-    $webDir = "uploads/user_pro_pics/";
-    $userid = $_SESSION['userid'];
-
-    if (!is_dir($uploadDir)) {
-        mkdir($uploadDir, 0777, true);
-    }
-
-    $file = $_FILES['profile_pic'];
-    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-    $error = "";
-
-    if (!in_array($ext, $allowed)) {
-        $error = "Invalid file type.";
-    } elseif ($file['size'] > 5 * 1024 * 1024) {
-        $error = "File too large.";
-    } elseif ($file['error'] !== UPLOAD_ERR_OK) {
-        $error = "Upload error.";
-    } else {
-        $unique = bin2hex(random_bytes(12));
-        $newName = $unique . '.' . $ext;
-        $target = $uploadDir . $newName;
-
-        if (!move_uploaded_file($file['tmp_name'], $target)) {
-            $error = "Failed to move uploaded file.";
-        } else {
-            // Get original dimensions and type
-            list($origW, $origH, $type) = getimagesize($target);
-
-            switch ($type) {
-                case IMAGETYPE_JPEG: $img = imagecreatefromjpeg($target); break;
-                case IMAGETYPE_PNG:  $img = imagecreatefrompng($target); break;
-                default: $img = false;
-            }
-
-            if ($img) {
-                if ($origW > $maxDim || $origH > $maxDim) {
-                    if ($origW/$maxDim > $origH/$maxDim) {
-                        $newW = $maxDim;
-                        $newH = intval($origH * ($maxDim/$origW));
-                    } else {
-                        $newH = $maxDim;
-                        $newW = intval($origW * ($maxDim/$origH));
-                    }
-                } else {
-                    $newW = $origW;
-                    $newH = $origH;
-                }
-
-                $resized = imagecreatetruecolor($newW, $newH);
-                if ($type == IMAGETYPE_PNG) {
-                    imagealphablending($resized, false);
-                    imagesavealpha($resized, true);
-                }
-                imagecopyresampled($resized, $img, 0,0,0,0, $newW, $newH, $origW, $origH);
-                switch ($type) {
-                    case IMAGETYPE_JPEG: imagejpeg($resized, $target, 90); break;
-                    case IMAGETYPE_PNG:  imagepng($resized, $target, 7); break;
-                }
-                imagedestroy($resized);
-                imagedestroy($img);
-            }
-
-            // Save/Update DB
-            $stmt = $conn->prepare("INSERT INTO profile_pic (userid, profile_pic) VALUES (?, ?) ON DUPLICATE KEY UPDATE profile_pic = ?");
-            $stmt->execute([$userid, $newName, $newName]);
-            // Return new image web path
-            echo json_encode([
-                "success" => true,
-                "avatar" => $webDir . $newName . "?v=" . time()
-            ]);
-            exit;
-        }
-    }
-    echo json_encode(["success" => false, "error" => $error]);
-    exit;
-}
 
 // Fetch logged-in user info
 $stmt = $conn->prepare("SELECT u.userid, u.username, u.gender FROM users u WHERE u.userid = ?");
 $stmt->execute([$_SESSION['userid']]);
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-// Get profile pic from profile_pic table
+// Get profile pic from profile_pics table
 $stmtPic = $conn->prepare("SELECT profile_pic FROM profile_pic WHERE userid = ?");
 $stmtPic->execute([$_SESSION['userid']]);
 $pic = $stmtPic->fetch(PDO::FETCH_ASSOC);
 
-$uploadsDir = "uploads/user_pro_pics/";
+$uploadsDir = "uploads/profile_pic/";
 $defaultMale = "uploads/static/male.jpeg";
 $defaultFemale = "uploads/static/female.jpeg";
 
-if (!empty($pic['profile_pic']) && file_exists(__DIR__ . "/uploads/user_pro_pics/" . $pic['profile_pic'])) {
+if (!empty($pic['profile_pic']) && file_exists(__DIR__ . "/uploads/profile_pic/" . $pic['profile_pic'])) {
     $avatar = $uploadsDir . $pic['profile_pic'] . "?v=" . time();
 } else {
     $avatar = ($user['gender'] === 'male') ? $defaultMale : $defaultFemale;
@@ -333,73 +246,14 @@ body { background:var(--color-light); display:flex; flex-direction:column; align
       opacity: 0.9;
       pointer-events: none;
     }
-    /* Ensure avatars are always perfectly circular */
-    #navbarAvatar, #sidebarAvatar {
-      width: 50px;
-      height: 50px;
-      border-radius: 50%;
-      object-fit: cover;
-      aspect-ratio: 1 / 1;
-      background: #eee;
-      display: block;
-    } 
-.profile-info {
-  position: relative;
-}
-.profile-options-btn {
-  cursor: pointer;
-  font-size: 22px;
-  color: #555;
-  user-select: none;
-  background: none;
-  border: none;
-  padding: 5px 10px;
-  position: absolute;
-  top: 0; right: 0;
-  z-index: 12;
-}
-.profile-options-dropdown {
-  display: none;
-  position: absolute;
-  top: 35px;
-  right: 0;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-  z-index: 500;
-  min-width: 100px;
-}
-.profile-options-dropdown button {
-  width: 100%;
-  padding: 10px 15px;
-  border: none;
-  background: none;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 8px;
-  transition: background 0.2s, color 0.2s, text-shadow 0.2s;
-  font-size: 15px;
-  color: #e11d48;
-  font-weight: bold;
-}
-.profile-options-dropdown button:hover {
-  background: #ffe4e6;
-  color: #fff;
-  text-shadow: 0 0 6px #e11d48, 0 0 18px #e11d48;
-  animation: glowDelete 0.8s alternate infinite;
-}
-@keyframes glowDelete {
-  from { box-shadow: 0 0 0 #e11d48; }
-  to { box-shadow: 0 0 16px #e11d48; }
-}
-</style>
+  </style>
   <!-- Emoji Picker Library -->
 <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@^1/index.js"></script>
 
 </head>
 <body>
 
- <!-- Navbar -->
+  <!-- Navbar -->
   <div class="navbar">
     <div class="logo">Axum Date</div>
     <div class="search-bar">
@@ -413,7 +267,7 @@ body { background:var(--color-light); display:flex; flex-direction:column; align
       <!-- Only owner can upload! -->
       <form id="profilePicForm" enctype="multipart/form-data" style="display:inline;">
         <label class="profile-upload-label">
-          <img src="<?php echo htmlspecialchars($avatar); ?>" id="navbarAvatar" alt="Profile">
+          <img src="<?php echo htmlspecialchars($avatar); ?>" id="navbarAvatar" alt="Profile" width="50" height="50" style="border-radius:50%;object-fit:cover;cursor:pointer;">
           <input type="file" name="profile_pic" id="profilePicInput" accept=".jpg,.jpeg,.png">
           <input type="hidden" name="userid" value="<?php echo $_SESSION['userid']; ?>">
         </label>
@@ -437,17 +291,15 @@ body { background:var(--color-light); display:flex; flex-direction:column; align
 
       <!-- Info Card -->
       <div class="info-card">
-  <div class="profile-info" style="position:relative;">
-    <img src="<?php echo htmlspecialchars($avatar); ?>" id="sidebarAvatar" alt="Profile">
-    <div class="username"><?php echo htmlspecialchars($user['username']); ?></div>
-    <!-- Three dot menu -->
-    <span class="profile-options-btn" style="margin-left:auto; cursor:pointer; font-size:22px; color:#555; position:absolute; top:0; right:0;">&#8230;</span>
-    <div class="profile-options-dropdown">
-      <button class="profile-delete-btn">Delete</button>
-    </div>
-  </div>
-  <button class="follow-btn">Follow (32)</button>
-</div>
+        <div class="profile-info">
+          <img src="<?php echo htmlspecialchars($avatar); ?>" id="sidebarAvatar" alt="Profile">
+          <div class="username"><?php echo htmlspecialchars($user['username']); ?></div>
+
+      </div>
+
+        <button class="follow-btn">Follow (32)</button>
+      </div>
+
       <!-- Sidebar Options -->
 <div class="sidebar-card">
   <div class="sidebar-item active">
@@ -793,7 +645,7 @@ body { background:var(--color-light); display:flex; flex-direction:column; align
 </div>
 
 <script>
-
+  
   // === DYNAMIC USER SEARCH ===
 const searchInput = document.getElementById("searchInput");
 const searchResults = document.getElementById("searchResults");
@@ -1330,54 +1182,6 @@ followingSearchInput.addEventListener("keyup", function () {
     }
   });
 });
-  // profile picture
-document.getElementById('profilePicInput').addEventListener('change', function() {
-  if (!this.files || !this.files[0]) return;
-  const formData = new FormData();
-  formData.append('profile_pic', this.files[0]);
-  formData.append('ajax', 1);
-  formData.append('userid', "<?php echo $_SESSION['userid']; ?>");
-
-  fetch('', {
-    method: 'POST',
-    body: formData
-  })
-  .then(resp => resp.json())
-  .then(data => {
-    if (data.success) {
-      document.getElementById('navbarAvatar').src = data.avatar;
-      document.getElementById('sidebarAvatar').src = data.avatar;
-    } else {
-      alert(data.error || "Upload failed.");
-    }
-    this.value = ""; // reset input
-  });
-});
-
-// Three dot menu toggle for profile card
-const pOptionsBtn = document.querySelector('.profile-options-btn');
-const pOptionsDropdown = document.querySelector('.profile-options-dropdown');
-if (pOptionsBtn && pOptionsDropdown) {
-  pOptionsBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    pOptionsDropdown.style.display = (pOptionsDropdown.style.display === 'block') ? 'none' : 'block';
-  });
-  document.addEventListener('click', function(e) {
-    if (!pOptionsDropdown.contains(e.target) && e.target !== pOptionsBtn) {
-      pOptionsDropdown.style.display = 'none';
-    }
-  });
-}
-const profileDeleteBtn = document.querySelector('.profile-delete-btn');
-if (profileDeleteBtn) {
-  profileDeleteBtn.addEventListener('click', function() {
-    if (confirm('Are you sure you want to delete your profile?')) {
-      // Replace with actual delete logic
-      alert('Profile deletion is not implemented yet.');
-      pOptionsDropdown.style.display = 'none';
-    }
-  });
-}
 
 </script>
 </body>
